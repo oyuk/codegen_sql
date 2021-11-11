@@ -1,3 +1,12 @@
+use codegen::Scope;
+
 fn main() {
-    println!("Hello, world!");
+    let mut scope = Scope::new();
+
+    scope.new_struct("Foo")
+        .derive("Debug")
+        .field("one", "usize")
+        .field("two", "String");
+
+    println!("{}", scope.to_string());
 }
