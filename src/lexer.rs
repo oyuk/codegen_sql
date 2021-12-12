@@ -1,18 +1,23 @@
-use regex::Regex;
 use crate::lexer::LexError::InvalidError;
-use crate::lexer::LexicalToken::{Comma, CreateTable, LParen, NotNull, Null, RParen, Semicolon, Text};
+use crate::lexer::LexicalToken::{
+    Comma, CreateTable, Date, Int, Json, LParen, NotNull, RParen, Semicolon, Text, Varchar,
+};
+use regex::Regex;
 use std::str::from_utf8;
 
-#[derive(PartialEq,Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum LexicalToken {
     CreateTable,
-    Null,
+    Int,
+    Varchar,
+    Json,
+    Date,
     NotNull,
     LParen,
     RParen,
     Comma,
     Semicolon,
-    Text(String)
+    Text(String),
 }
 
 pub struct MatchResult {
@@ -27,25 +32,24 @@ trait Matcher {
 
 struct RegexAndToken {
     regex: Regex,
-    token: LexicalToken
+    token: LexicalToken,
 }
 
 struct RegexMatcher {
-    regex_and_tokens: Vec<RegexAndToken>
+    regex_and_tokens: Vec<RegexAndToken>,
 }
 
 impl RegexMatcher {
-
     fn new(word_and_tokens: Vec<(&str, LexicalToken)>) -> Self {
-        let regex_and_tokens = word_and_tokens.iter().map(|w| {
-           RegexAndToken {
-               regex: Regex::new(w.0).unwrap(),
-               token: w.1.clone()
-           }
-        }).collect();
+        let regex_and_tokens = word_and_tokens
+            .iter()
+            .map(|w| RegexAndToken {
+                regex: Regex::new(w.0).unwrap(),
+                token: w.1.clone(),
+            })
+            .collect();
         Self { regex_and_tokens }
     }
-
 }
 
 impl Matcher for RegexMatcher {
@@ -56,8 +60,8 @@ impl Matcher for RegexMatcher {
                 return Some(MatchResult {
                     token: regex_and_token.token.clone(),
                     start: position,
-                    end: position + m.end() - 1
-                })
+                    end: position + m.end() - 1,
+                });
             }
         }
         None
@@ -66,11 +70,11 @@ impl Matcher for RegexMatcher {
 
 struct SymbolAndToken {
     symbol: u8,
-    token: LexicalToken
+    token: LexicalToken,
 }
 
 struct SymbolMatcher {
-    symbols: Vec<SymbolAndToken>
+    symbols: Vec<SymbolAndToken>,
 }
 
 impl Matcher for SymbolMatcher {
@@ -80,59 +84,78 @@ impl Matcher for SymbolMatcher {
                 return Some(MatchResult {
                     token: symbol_and_token.token.clone(),
                     start: position,
-                    end: position + 1 });
+                    end: position,
+                });
             }
         }
         None
     }
 }
 
-struct TextMatcher {
+struct TextMatcher {}
 
+impl TextMatcher {
+    fn text_is_valid(&self, text: u8) -> bool {
+        text != b',' && (text.is_ascii_alphanumeric() || text == b'_')
+    }
 }
 
 impl Matcher for TextMatcher {
     fn exec(&self, input: &[u8], position: usize) -> Option<MatchResult> {
         let mut new_position = position;
-        while new_position < input.len() && input[new_position].is_ascii_alphanumeric() {
+        while new_position < input.len() && self.text_is_valid(input[new_position]) {
             new_position += 1;
         }
         if position != new_position {
             return Some(MatchResult {
                 token: Text(from_utf8(&input[position..new_position]).ok()?.into()),
                 start: position,
-                end: new_position
+                end: new_position,
             });
         }
         None
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexError {
-    InvalidError(String)
+    InvalidError(String),
 }
 
 pub struct Lexer {
-    matcher: Vec<Box<dyn Matcher>>
+    matcher: Vec<Box<dyn Matcher>>,
 }
 
 impl Lexer {
-    
     pub fn new() -> Self {
-
         Lexer {
             matcher: vec![
                 Box::new(RegexMatcher::new(vec![
-                    (r"^(?i)CREATE TABLE".into(), CreateTable),
-                    (r"^(?i)NULL".into(), Null),
-                    (r"^(?i)Not Null".into(), NotNull)])),
-                Box::new(SymbolMatcher { symbols: vec![
-                    SymbolAndToken{ symbol: b'(', token: LParen },
-                    SymbolAndToken{ symbol: b')', token: RParen },
-                    SymbolAndToken{ symbol: b',', token: Comma },
-                    SymbolAndToken{ symbol: b';', token: Semicolon }]}),
-                Box::new(TextMatcher{})
-            ]
+                    (r"^(?i)CREATE TABLE", CreateTable),
+                    (r"^(?i)int(eger)?", Int),
+                    (r"^(?i)json", Json),
+                    (r"^(?i)varchar", Varchar),
+                    (r"^(?i)date", Date),
+                    (r"^(?i)Not Null", NotNull),
+                ])),
+                Box::new(SymbolMatcher {
+                    symbols: vec![
+                        SymbolAndToken {
+                            symbol: b'(',
+                            token: LParen,
+                        },
+                        SymbolAndToken {
+                            symbol: b')',
+                            token: RParen,
+                        },
+                        SymbolAndToken {
+                            symbol: b';',
+                            token: Semicolon,
+                        },
+                    ],
+                }),
+                Box::new(TextMatcher {}),
+            ],
         }
     }
 
@@ -159,30 +182,54 @@ impl Lexer {
         let mut tokens: Vec<LexicalToken> = Vec::new();
         while pos < input.len() {
             match input[pos] {
-                b' '| b'\n' | b'\t' => {
+                b' ' | b'\n' | b'\t' => {
                     pos = self.skip_space(input, pos);
                 }
+                b',' => {
+                    tokens.push(Comma);
+                    pos += 1;
+                }
                 _ => {
+                    let _k = input[pos];
                     let result = self.check(input, pos)?;
                     tokens.push(result.token);
                     pos = result.end + 1;
                 }
             }
         }
+        let _a = input[pos - 2];
         Ok(tokens)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::lexer::LexicalToken::{
+        Comma, CreateTable, Date, Int, Json, LParen, NotNull, RParen, Semicolon, Text, Varchar,
+    };
     use crate::Lexer;
-    use crate::lexer::LexicalToken::{Comma, CreateTable, LParen, NotNull, Null, RParen, Semicolon, Text};
 
     #[test]
     fn test_run() {
         let lexer = Lexer::new();
-        let result = lexer.run("create table NULL not NULL ( ) , ; \n \t test").unwrap_or(vec![]);
-        assert_eq!(result , vec![CreateTable, Null, NotNull, LParen, RParen, Comma, Semicolon, Text("test".into())]);
+        let result = lexer
+            .run("create table not NULL int integer json varchar date ( ) , ; \n \t test_test").unwrap_or_default();
+        assert_eq!(
+            result,
+            vec![
+                CreateTable,
+                NotNull,
+                Int,
+                Int,
+                Json,
+                Varchar,
+                Date,
+                LParen,
+                RParen,
+                Comma,
+                Semicolon,
+                Text("test_test".into())
+            ]
+        );
     }
 }
