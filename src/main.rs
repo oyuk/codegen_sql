@@ -1,11 +1,22 @@
-mod table;
+mod interpreter;
 mod lexer;
+mod parser;
+
+use crate::interpreter::Interpreter;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 
 use std::env;
 use std::fs::File;
-use std::io::{BufReader, Read};
-use codegen::Scope;
-use crate::lexer::Lexer;
+use std::io::{Read};
+
+/*
+
+EXPR = CREATE TABLE Text ( EXPR1 ) ;
+EXPR1 = EXPR2 {EXPR1}
+EXPR2 = Text (Int|Json|Varchar|Date) [Not Null] ,
+
+*/
 
 fn main() {
     let filename = env::args().nth(1).expect("1 argument FILENAME required");
@@ -15,16 +26,23 @@ fn main() {
         .expect("something went wrong reading the file");
 
     let lexer = Lexer::new();
-    lexer.run(&contents);
+    let tokens = match lexer.run(&contents) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            panic!("Lexical error: {:?}", error)
+        }
+    };
 
-    // println!("With text:\n{}", contents);
+    let parser = Parser::new();
+    let ast = match parser.run(tokens) {
+        Ok(ast) => ast,
+        Err(error) => {
+            panic!("Parse error: {:?}", error)
+        }
+    };
 
-    // let mut scope = Scope::new();
-    //
-    // scope.new_struct("Foo")
-    //     .derive("Debug")
-    //     .field("one", "usize")
-    //     .field("two", "String");
-    //
-    // println!("{}", scope.to_string());
+    let interpreter = Interpreter {};
+    let result = interpreter.run(ast);
+
+    println!("result:\n{:?}", result);
 }
